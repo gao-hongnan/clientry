@@ -6,14 +6,13 @@ from typing import Any
 
 import httpx
 
-from clientry import BaseClient, EmptyRequest, EndpointConfig
+from clientry import BaseClient, EmptyRequest
+from playground.client.endpoints import HTTPBinEndpoints
 from playground.client.models import (
     DelayResponse,
     HTTPBinResponse,
     JSONRequest,
     StatusResponse,
-    StreamResponse,
-    UploadRequest,
 )
 
 
@@ -36,62 +35,7 @@ class HTTPBinClient(BaseClient):
             max_retry_attempts=max_retry_attempts,
             **kwargs,
         )
-
-    JSON_POST_ENDPOINT = EndpointConfig[JSONRequest, HTTPBinResponse](
-        path="/post",
-        method="POST",
-        request_type=JSONRequest,
-        response_type=HTTPBinResponse,
-    )
-
-    GET_ENDPOINT = EndpointConfig[EmptyRequest, HTTPBinResponse](
-        path="/get",
-        method="GET",
-        request_type=EmptyRequest,
-        response_type=HTTPBinResponse,
-    )
-
-    PUT_ENDPOINT = EndpointConfig[JSONRequest, HTTPBinResponse](
-        path="/put",
-        method="PUT",
-        request_type=JSONRequest,
-        response_type=HTTPBinResponse,
-    )
-
-    DELETE_ENDPOINT = EndpointConfig[EmptyRequest, HTTPBinResponse](
-        path="/delete",
-        method="DELETE",
-        request_type=EmptyRequest,
-        response_type=HTTPBinResponse,
-    )
-
-    UPLOAD_ENDPOINT = EndpointConfig[UploadRequest, HTTPBinResponse](
-        path="/post",
-        method="POST",
-        request_type=UploadRequest,
-        response_type=HTTPBinResponse,
-    )
-
-    DELAY_ENDPOINT = EndpointConfig[EmptyRequest, DelayResponse](
-        path="/delay/{seconds}",
-        method="GET",
-        request_type=EmptyRequest,
-        response_type=DelayResponse,
-    )
-
-    STATUS_ENDPOINT = EndpointConfig[EmptyRequest, StatusResponse](
-        path="/status/{code}",
-        method="GET",
-        request_type=EmptyRequest,
-        response_type=StatusResponse,
-    )
-
-    STREAM_ENDPOINT = EndpointConfig[EmptyRequest, StreamResponse](
-        path="/stream/{n}",
-        method="GET",
-        request_type=EmptyRequest,
-        response_type=StreamResponse,
-    )
+        self.endpoints = HTTPBinEndpoints()
 
     async def echo_json(
         self,
@@ -100,7 +44,7 @@ class HTTPBinClient(BaseClient):
     ) -> HTTPBinResponse:
         request = JSONRequest(data=data)
         return await self._arequest(
-            self.JSON_POST_ENDPOINT,
+            self.endpoints.POST_JSON,
             request,
             max_retry_attempts=max_retry_attempts,
         )
@@ -121,7 +65,7 @@ class HTTPBinClient(BaseClient):
                 data[key] = str(value)
 
         return await self._arequest(
-            self.UPLOAD_ENDPOINT,
+            self.endpoints.UPLOAD,
             files=files,
             data=data if data else None,
         )
@@ -130,14 +74,14 @@ class HTTPBinClient(BaseClient):
         self,
         files_data: dict[str, tuple[str, bytes, str]],
     ) -> HTTPBinResponse:
-        return await self._arequest(self.UPLOAD_ENDPOINT, files=files_data)
+        return await self._arequest(self.endpoints.UPLOAD, files=files_data)
 
     async def send_stream(
         self,
         content: bytes | str | AsyncIterable[bytes],
     ) -> HTTPBinResponse:
         return await self._arequest(
-            self.JSON_POST_ENDPOINT,
+            self.endpoints.POST_JSON,
             content=content,
         )
 
@@ -146,7 +90,7 @@ class HTTPBinClient(BaseClient):
         status_code: int,
         max_retry_attempts: int | None = None,
     ) -> StatusResponse | None:
-        endpoint = self.STATUS_ENDPOINT.model_copy(update={"path": f"/status/{status_code}"})
+        endpoint = self.endpoints.STATUS.model_copy(update={"path": f"/status/{status_code}"})
         return await self._arequest(
             endpoint,
             EmptyRequest(),
@@ -158,7 +102,7 @@ class HTTPBinClient(BaseClient):
         seconds: int,
         max_retry_attempts: int | None = None,
     ) -> DelayResponse:
-        endpoint = self.DELAY_ENDPOINT.model_copy(update={"path": f"/delay/{seconds}"})
+        endpoint = self.endpoints.DELAY.model_copy(update={"path": f"/delay/{seconds}"})
         return await self._arequest(
             endpoint,
             EmptyRequest(),
@@ -166,18 +110,18 @@ class HTTPBinClient(BaseClient):
         )
 
     async def get_request(self, params: dict[str, Any] | None = None) -> HTTPBinResponse:
-        return await self._arequest(self.GET_ENDPOINT, EmptyRequest(), params=params)
+        return await self._arequest(self.endpoints.GET, EmptyRequest(), params=params)
 
     async def put_json(self, data: dict[str, Any]) -> HTTPBinResponse:
         request = JSONRequest(data=data)
-        return await self._arequest(self.PUT_ENDPOINT, request)
+        return await self._arequest(self.endpoints.PUT_JSON, request)
 
     async def delete_request(self) -> HTTPBinResponse:
-        return await self._arequest(self.DELETE_ENDPOINT, EmptyRequest())
+        return await self._arequest(self.endpoints.DELETE, EmptyRequest())
 
     async def test_headers(self, custom_headers: dict[str, str]) -> HTTPBinResponse:
         return await self._arequest(
-            self.GET_ENDPOINT,
+            self.endpoints.GET,
             EmptyRequest(),
             headers=custom_headers,
         )
