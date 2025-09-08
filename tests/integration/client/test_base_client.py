@@ -95,6 +95,39 @@ async def test_error_classification(client: HTTPBinClient) -> None:
 
 
 @pytest.mark.asyncio
+async def test_return_raw_response(client: HTTPBinClient) -> None:
+    """Test that return_raw parameter works correctly."""
+    test_data = {"test": "data", "number": 42}
+
+    # Test default behavior (return_raw=False)
+    response = await client.echo_json(test_data)
+    assert isinstance(response, HTTPBinResponse)
+    assert response.json_data == {"data": test_data}
+
+    # Test return_raw=True - returns tuple
+    from clientry import EmptyRequest, EndpointConfig
+
+    endpoint = EndpointConfig[EmptyRequest, HTTPBinResponse](
+        path="/get",
+        method="GET",
+        request_type=EmptyRequest,
+        response_type=HTTPBinResponse,
+    )
+
+    # Call with return_raw=True
+    parsed, raw = await client._arequest(endpoint, EmptyRequest(), return_raw=True)
+
+    # Verify both parts of the tuple
+    assert isinstance(parsed, HTTPBinResponse)
+    assert isinstance(raw, httpx.Response)
+    assert raw.status_code == 200
+    assert "x-amzn-trace-id" in raw.headers or "date" in raw.headers  # Common headers
+
+    # Verify that the parsed response matches what we'd get from raw
+    assert parsed.url == "https://httpbin.org/get"
+
+
+@pytest.mark.asyncio
 async def test_context_manager_lifecycle() -> None:
     async with HTTPBinClient(timeout=5.0) as client:
         assert client._client is not None

@@ -257,9 +257,7 @@ class HTTPBinClient(BaseClient):
             max_retry_attempts=max_retry_attempts,
         )
 
-    async def get_request(
-        self, params: dict[str, Any] | None = None
-    ) -> HTTPBinResponse:
+    async def get_request(self, params: dict[str, Any] | None = None) -> HTTPBinResponse:
         """Make a GET request with query parameters.
 
         Parameters

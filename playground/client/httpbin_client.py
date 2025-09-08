@@ -146,9 +146,7 @@ class HTTPBinClient(BaseClient):
         status_code: int,
         max_retry_attempts: int | None = None,
     ) -> StatusResponse | None:
-        endpoint = self.STATUS_ENDPOINT.model_copy(
-            update={"path": f"/status/{status_code}"}
-        )
+        endpoint = self.STATUS_ENDPOINT.model_copy(update={"path": f"/status/{status_code}"})
         return await self._arequest(
             endpoint,
             EmptyRequest(),
@@ -167,9 +165,7 @@ class HTTPBinClient(BaseClient):
             max_retry_attempts=max_retry_attempts,
         )
 
-    async def get_request(
-        self, params: dict[str, Any] | None = None
-    ) -> HTTPBinResponse:
+    async def get_request(self, params: dict[str, Any] | None = None) -> HTTPBinResponse:
         return await self._arequest(self.GET_ENDPOINT, EmptyRequest(), params=params)
 
     async def put_json(self, data: dict[str, Any]) -> HTTPBinResponse:

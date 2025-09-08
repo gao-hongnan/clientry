@@ -60,19 +60,14 @@ class ResilientClient:
     async def aclose(self) -> None:
         await self._client.aclose()
 
-    async def test_status(
-        self, status_code: int, max_retry_attempts: int | None = None
-    ) -> Any:
+    async def test_status(self, status_code: int, max_retry_attempts: int | None = None) -> Any:
         return await self._client.test_status(status_code, max_retry_attempts)
 
     async def _check_circuit_breaker(self) -> None:
         now = time.time()
 
         if self._circuit_breaker.state == "open":
-            if (
-                now - self._circuit_breaker.last_failure_time
-                > self._circuit_breaker.recovery_timeout
-            ):
+            if now - self._circuit_breaker.last_failure_time > self._circuit_breaker.recovery_timeout:
                 self._circuit_breaker.state = "half_open"
                 console.print("🔄 Circuit breaker: HALF_OPEN (testing)")
             else:
@@ -81,9 +76,7 @@ class ResilientClient:
     async def _rate_limit(self) -> None:
         now = time.time()
         elapsed = now - self._last_token_refresh
-        self._rate_limit_tokens = min(
-            10, self._rate_limit_tokens + elapsed * self._token_refresh_rate
-        )
+        self._rate_limit_tokens = min(10, self._rate_limit_tokens + elapsed * self._token_refresh_rate)
         self._last_token_refresh = now
 
         if self._rate_limit_tokens < 1:
@@ -111,10 +104,7 @@ class ResilientClient:
             self._circuit_breaker.failures += 1
             self._circuit_breaker.last_failure_time = time.time()
 
-            if (
-                self._circuit_breaker.failures
-                >= self._circuit_breaker.failure_threshold
-            ):
+            if self._circuit_breaker.failures >= self._circuit_breaker.failure_threshold:
                 self._circuit_breaker.state = "open"
                 console.print("💥 Circuit breaker: OPEN (too many failures)")
 
@@ -163,9 +153,7 @@ class GitHubClient(BaseClient):
 async def demo_section(title: str, description: str) -> AsyncIterator[None]:
     start_time = time.perf_counter()
 
-    panel = Panel.fit(
-        f"[bold cyan]{title}[/bold cyan]\n{description}", border_style="cyan"
-    )
+    panel = Panel.fit(f"[bold cyan]{title}[/bold cyan]\n{description}", border_style="cyan")
     console.print("\n")
     console.print(panel)
 
@@ -177,9 +165,7 @@ async def demo_section(title: str, description: str) -> AsyncIterator[None]:
 
 
 async def demo_generic_pattern() -> None:
-    async with demo_section(
-        "🎯 Generic Request Pattern", "Type-safe endpoints with zero code duplication"
-    ):
+    async with demo_section("🎯 Generic Request Pattern", "Type-safe endpoints with zero code duplication"):
         results_table = Table(title="Generic Pattern Results")
         results_table.add_column("Client", style="cyan")
         results_table.add_column("Endpoint", style="yellow")
@@ -187,18 +173,10 @@ async def demo_generic_pattern() -> None:
 
         async with HTTPBinClient() as httpbin_client, GitHubClient() as github_client:
             response = await httpbin_client.get_request({"demo": "generic_pattern"})
-            results_table.add_row(
-                "HTTPBin", "GET /get", f"✅ {len(response.args)} params echoed"
-            )
+            results_table.add_row("HTTPBin", "GET /get", f"✅ {len(response.args)} params echoed")
 
-            json_response = await httpbin_client.echo_json(
-                {"pattern": "generic", "type_safe": True}
-            )
-            pattern_value = (
-                json_response.json_data.get("pattern")
-                if json_response.json_data
-                else None
-            )
+            json_response = await httpbin_client.echo_json({"pattern": "generic", "type_safe": True})
+            pattern_value = json_response.json_data.get("pattern") if json_response.json_data else None
             results_table.add_row(
                 "HTTPBin",
                 "POST /post",
@@ -213,9 +191,7 @@ async def demo_generic_pattern() -> None:
                     f"✅ User: {user.name or 'N/A'} ({user.public_repos} repos)",
                 )
             except Exception as e:
-                results_table.add_row(
-                    "GitHub", "GET /users/octocat", f"❌ {str(e)[:50]}"
-                )
+                results_table.add_row("GitHub", "GET /users/octocat", f"❌ {str(e)[:50]}")
 
         console.print(results_table)
         console.print("[dim]💡 Same BaseClient, different APIs, full type safety[/dim]")
@@ -223,18 +199,14 @@ async def demo_generic_pattern() -> None:
 
 async def demo_error_resilience() -> None:
     async with (
-        demo_section(
-            "🛡️ Error Resilience", "Circuit breakers, retries, and graceful degradation"
-        ),
+        demo_section("🛡️ Error Resilience", "Circuit breakers, retries, and graceful degradation"),
         ResilientClient() as client,
     ):
         error_scenarios = [
             ("✅ Success", lambda: client.echo_json_resilient({"test": "success"})),
             (
                 "⚠️ Rate Limited",
-                lambda: asyncio.gather(
-                    *[client.echo_json_resilient({"burst": i}) for i in range(15)]
-                ),
+                lambda: asyncio.gather(*[client.echo_json_resilient({"burst": i}) for i in range(15)]),
             ),
             ("💥 Failures", lambda: client.test_status(503, max_retry_attempts=1)),
         ]
@@ -247,12 +219,8 @@ async def demo_error_resilience() -> None:
                 elapsed = time.perf_counter() - start
 
                 if isinstance(result, list):
-                    console.print(
-                        f"   📊 Processed {len(result)} requests in {elapsed:.2f}s"
-                    )
-                    console.print(
-                        f"   🚀 Throughput: {len(result) / elapsed:.1f} req/s"
-                    )
+                    console.print(f"   📊 Processed {len(result)} requests in {elapsed:.2f}s")
+                    console.print(f"   🚀 Throughput: {len(result) / elapsed:.1f} req/s")
                 else:
                     console.print(f"   ✅ Completed in {elapsed:.2f}s")
 
@@ -279,10 +247,7 @@ async def demo_concurrent_patterns() -> None:
         results_table.add_column("Efficiency", style="green")
 
         for batch_size in batch_sizes:
-            requests = [
-                client.echo_json({"batch_id": batch_size, "request_id": i})
-                for i in range(batch_size)
-            ]
+            requests = [client.echo_json({"batch_id": batch_size, "request_id": i}) for i in range(batch_size)]
 
             with Progress(
                 SpinnerColumn(),
@@ -292,9 +257,7 @@ async def demo_concurrent_patterns() -> None:
                 console=console,
                 transient=True,
             ) as progress:
-                task = progress.add_task(
-                    f"Processing batch of {batch_size}...", total=batch_size
-                )
+                task = progress.add_task(f"Processing batch of {batch_size}...", total=batch_size)
 
                 start = time.perf_counter()
                 results = await asyncio.gather(*requests, return_exceptions=True)
@@ -324,9 +287,7 @@ async def demo_production_patterns() -> None:
         cache: dict[str, tuple[Any, float]] = {}
         cache_ttl = 5.0
 
-        async def cached_request(
-            client: HTTPBinClient, key: str, data: dict[str, Any]
-        ) -> HTTPBinResponse:
+        async def cached_request(client: HTTPBinClient, key: str, data: dict[str, Any]) -> HTTPBinResponse:
             now = time.time()
 
             if key in cache:
@@ -343,9 +304,7 @@ async def demo_production_patterns() -> None:
         request_count = 0
         error_count = 0
 
-        async def monitored_request(
-            client: HTTPBinClient, data: dict[str, Any]
-        ) -> HTTPBinResponse | None:
+        async def monitored_request(client: HTTPBinClient, data: dict[str, Any]) -> HTTPBinResponse | None:
             nonlocal request_count, error_count
             request_count += 1
 
@@ -374,9 +333,7 @@ async def demo_production_patterns() -> None:
                 await cached_request(client, cache_key, request_data)
                 await monitored_request(client, {"monitoring": "demo"})
 
-                is_cached = (
-                    cache_key in cache and i > 0 and cache_key == operations[i - 1][0]
-                )
+                is_cached = cache_key in cache and i > 0 and cache_key == operations[i - 1][0]
 
                 workflow_table.add_row(
                     f"Request {i + 1}",

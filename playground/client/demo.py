@@ -136,9 +136,7 @@ async def demo_concurrent_requests(client: HTTPBinClient) -> None:
     console.print("\n[bold cyan]🔄 Concurrent Requests Demo[/bold cyan]")
     console.print("─" * 40)
 
-    tasks = [
-        client.echo_json({"request_id": i, "data": f"Request {i}"}) for i in range(5)
-    ]
+    tasks = [client.echo_json({"request_id": i, "data": f"Request {i}"}) for i in range(5)]
 
     with Progress(
         SpinnerColumn(),
@@ -165,11 +163,7 @@ async def demo_concurrent_requests(client: HTTPBinClient) -> None:
             request_id = "N/A"
             if hasattr(result, "json_data") and result.json_data:
                 data = result.json_data
-                if (
-                    isinstance(data, dict)
-                    and "data" in data
-                    and isinstance(data["data"], dict)
-                ):
+                if isinstance(data, dict) and "data" in data and isinstance(data["data"], dict):
                     request_id = str(data["data"].get("request_id", "N/A"))
             table.add_row(str(i), "✅ Success", request_id)
 
@@ -265,9 +259,7 @@ async def demo_client_injection() -> None:
     console.print("   ℹ️ HTTPBinClient closed, but injected client still open")
 
     raw_response = await custom_client.get("/get")
-    console.print(
-        f"   ✅ Injected client still works: status={raw_response.status_code}"
-    )
+    console.print(f"   ✅ Injected client still works: status={raw_response.status_code}")
 
     await custom_client.aclose()
     console.print("   ✅ Manually closed injected client")

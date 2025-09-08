@@ -28,7 +28,7 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Self
+from typing import Any, Literal, Self, overload
 from urllib.parse import urlparse
 
 import httpx
@@ -114,10 +114,23 @@ class BaseClient:
     ...     )
     ...
     ...     async def call_api(self, request: RequestType) -> ResponseType:
-    ...         return await self._request(self.ENDPOINT, request)
+    ...         return await self._arequest(self.ENDPOINT, request)
+    ...
+    ...     async def call_api_with_raw(
+    ...         self, request: RequestType
+    ...     ) -> tuple[ResponseType, httpx.Response]:
+    ...         # Get both parsed response and raw httpx.Response
+    ...         return await self._arequest(self.ENDPOINT, request, return_raw=True)
     >>>
     >>> async with MyAPIClient(base_url="https://api.example.com") as client:
+    ...     # Get only the parsed response (default behavior)
     ...     result = await client.call_api(request)
+    ...
+    ...     # Get both parsed and raw response
+    ...     parsed, raw = await client.call_api_with_raw(request)
+    ...     print(parsed.data)  # Access parsed model
+    ...     print(raw.headers['x-request-id'])  # Access raw headers
+    ...     print(raw.status_code)  # Access status code
 
     Notes
     -----
@@ -356,11 +369,13 @@ class BaseClient:
             before_sleep=log_retry,
         )
 
+    @overload
     async def _arequest(
         self,
         endpoint: EndpointConfig[RequestT, ResponseT],
         request_data: RequestT | None = None,
         *,
+        return_raw: Literal[False] = False,
         files: FilesParam | None = None,
         content: StreamContent | None = None,
         headers: Headers | None = None,
@@ -370,7 +385,42 @@ class BaseClient:
         retry_multiplier: float | None = None,
         retry_on_status: frozenset[int] | None = None,
         **kwargs: Any,
-    ) -> ResponseT:
+    ) -> ResponseT: ...
+
+    @overload
+    async def _arequest(
+        self,
+        endpoint: EndpointConfig[RequestT, ResponseT],
+        request_data: RequestT | None = None,
+        *,
+        return_raw: Literal[True],
+        files: FilesParam | None = None,
+        content: StreamContent | None = None,
+        headers: Headers | None = None,
+        max_retry_attempts: int | None = None,
+        retry_min_wait: float | None = None,
+        retry_max_wait: float | None = None,
+        retry_multiplier: float | None = None,
+        retry_on_status: frozenset[int] | None = None,
+        **kwargs: Any,
+    ) -> tuple[ResponseT, httpx.Response]: ...
+
+    async def _arequest(
+        self,
+        endpoint: EndpointConfig[RequestT, ResponseT],
+        request_data: RequestT | None = None,
+        *,
+        return_raw: bool = False,
+        files: FilesParam | None = None,
+        content: StreamContent | None = None,
+        headers: Headers | None = None,
+        max_retry_attempts: int | None = None,
+        retry_min_wait: float | None = None,
+        retry_max_wait: float | None = None,
+        retry_multiplier: float | None = None,
+        retry_on_status: frozenset[int] | None = None,
+        **kwargs: Any,
+    ) -> ResponseT | tuple[ResponseT, httpx.Response]:
         """Make a request to an endpoint with configurable retry and error handling.
 
         This is the core method that all API calls go through. It provides:
@@ -383,6 +433,9 @@ class BaseClient:
             Endpoint configuration containing path, method, and types.
         request_data : RequestT | None, optional
             Request data model for POST/PUT/PATCH methods (default: None).
+        return_raw : bool, optional
+            If True, returns tuple of (parsed_response, raw_httpx_response).
+            If False, returns only the parsed response (default: False).
         files : Mapping[str, Any] | None, optional
             Files to upload as multipart/form-data (default: None).
         content : bytes | str | Iterable[bytes] | AsyncIterable[bytes] | None, optional
@@ -404,8 +457,9 @@ class BaseClient:
 
         Returns
         -------
-        ResponseT
-            Deserialized and validated response object.
+        ResponseT | tuple[ResponseT, httpx.Response]
+            If return_raw=False: Deserialized and validated response object.
+            If return_raw=True: Tuple of (parsed_response, raw_httpx_response).
 
         Raises
         ------
@@ -424,7 +478,7 @@ class BaseClient:
             retry_on_status=retry_on_status,
         )
 
-        async def _amake_request() -> ResponseT:
+        async def _amake_request() -> ResponseT | tuple[ResponseT, httpx.Response]:
             """Inner function that performs the actual HTTP request."""
             method = endpoint.method.lower()
 
@@ -452,7 +506,11 @@ class BaseClient:
                     case code if code in self.success_status:
                         try:
                             response_data = response.json()
-                            return endpoint.response_type.model_validate(response_data)
+                            parsed = endpoint.response_type.model_validate(response_data)
+
+                            if return_raw:
+                                return parsed, response
+                            return parsed
                         except (json.JSONDecodeError, Exception) as e:
                             logger.error(f"Failed to parse response: {e}")
                             raise ClientError(
