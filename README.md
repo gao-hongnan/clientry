@@ -1,7 +1,7 @@
 # Clientry
 
 [![CI](https://github.com/gao-hongnan/clientry/actions/workflows/ci.yml/badge.svg)](https://github.com/gao-hongnan/clientry/actions/workflows/ci.yml)
-[![Python](https://img.shields.io/badge/python-3.12%20%7C%203.13-blue.svg)](https://www.python.org/downloads/)
+[![Python](https://img.shields.io/badge/python-3.13-blue.svg)](https://www.python.org/downloads/)
 [![PyPI](https://img.shields.io/badge/pypi-v22.0.0-blue.svg)](https://github.com/gao-hongnan/clientry)
 [![License](https://img.shields.io/badge/license-Apache%202.0-green.svg)](https://opensource.org/licenses/Apache-2.0)
 [![Ruff](https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json)](https://github.com/astral-sh/ruff)
