@@ -203,7 +203,7 @@ wheels = [
 
 [[package]]
 name = "clientry"
-version = "5.0.0"
+version = "6.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "httpx" },
