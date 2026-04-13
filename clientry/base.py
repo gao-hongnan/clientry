@@ -32,13 +32,7 @@ from typing import Any, Literal, Self, overload
 from urllib.parse import urlparse
 
 import httpx
-from tenacity import (
-    AsyncRetrying,
-    RetryCallState,
-    retry_if_exception,
-    stop_after_attempt,
-    wait_exponential,
-)
+from tenacious.retry import Retry, RetryCallState, RetryConfig
 
 from clientry.errors import (
     ClientError,
@@ -150,10 +144,7 @@ class BaseClient:
         max_keepalive_connections: int = 5,
         max_connections: int = 10,
         default_headers: dict[str, str] | None = None,
-        max_retry_attempts: int = 3,
-        retry_min_wait: float = 1.0,
-        retry_max_wait: float = 10.0,
-        retry_multiplier: float = 2.0,
+        retry_config: RetryConfig | None = None,
         retry_on_status: frozenset[int] | None = None,
         success_status: frozenset[int] | None = None,
         permanent_error_status: frozenset[int] | None = None,
@@ -180,14 +171,9 @@ class BaseClient:
             Maximum total number of connections (default: 10).
         default_headers : dict[str, str] | None, optional
             Default headers to include in all requests (default: None).
-        max_retry_attempts : int, optional
-            Maximum number of retry attempts (default: 3).
-        retry_min_wait : float, optional
-            Minimum wait time in seconds between retries (default: 1.0).
-        retry_max_wait : float, optional
-            Maximum wait time in seconds between retries (default: 10.0).
-        retry_multiplier : float, optional
-            Exponential backoff multiplier (default: 2.0).
+        retry_config : RetryConfig | None, optional
+            Retry configuration (attempts, backoff, etc.). If None, uses
+            defaults: 3 attempts, 1-10s exponential backoff with jitter.
         retry_on_status : frozenset[int] | None, optional
             HTTP status codes that trigger retries (default: {408, 429, 502, 503, 504}).
         success_status : frozenset[int] | None, optional
@@ -210,10 +196,7 @@ class BaseClient:
         self.max_keepalive_connections = max_keepalive_connections
         self.max_connections = max_connections
         self.default_headers = default_headers or {}
-        self.max_retry_attempts = max_retry_attempts
-        self.retry_min_wait = retry_min_wait
-        self.retry_max_wait = retry_max_wait
-        self.retry_multiplier = retry_multiplier
+        self._retry_config = retry_config or RetryConfig(max_attempts=3, wait_min=1.0, wait_max=10.0, multiplier=2.0)
         self.retry_on_status = retry_on_status or frozenset({408, 429, 502, 503, 504})
         self.success_status = success_status or frozenset({200, 201, 204})
         self.permanent_error_status = permanent_error_status or frozenset({400, 401, 403, 404, 405, 406, 409, 410, 422})
@@ -292,82 +275,44 @@ class BaseClient:
 
     def _retryer(
         self,
-        max_attempts: int | None = None,
-        min_wait: float | None = None,
-        max_wait: float | None = None,
-        multiplier: float | None = None,
+        retry_config: RetryConfig | None = None,
         retry_on_status: frozenset[int] | None = None,
-    ) -> AsyncRetrying:
-        """Create a tenacity retry decorator with the given configuration.
+    ) -> Retry:
+        """Build a :class:`tenacious.retry.Retry` decorator for one request.
 
         Parameters
         ----------
-        max_attempts : int | None, optional
-            Maximum number of retry attempts (default: uses instance default).
-        min_wait : float | None, optional
-            Minimum wait time in seconds between retries (default: uses instance default).
-        max_wait : float | None, optional
-            Maximum wait time in seconds between retries (default: uses instance default).
-        multiplier : float | None, optional
-            Exponential backoff multiplier (default: uses instance default).
+        retry_config : RetryConfig | None, optional
+            Per-request override. Falls back to the instance default.
         retry_on_status : frozenset[int] | None, optional
             HTTP status codes that trigger retries (default: uses instance default).
 
         Returns
         -------
-        AsyncRetrying
-            Configured AsyncRetrying instance. Returns a single-attempt instance
-            when retries are disabled.
-
-        Examples
-        --------
-        >>> retrying = self._retryer(max_attempts=5, max_wait=30.0)
-        >>> async for attempt in retrying:
-        ...     with attempt:
-        ...         result = await self._make_request()
+        Retry
+            Configured retry decorator ready to wrap an async function.
         """
-        max_attempts = max_attempts if max_attempts is not None else self.max_retry_attempts
-        min_wait = min_wait if min_wait is not None else self.retry_min_wait
-        max_wait = max_wait if max_wait is not None else self.retry_max_wait
-        multiplier = multiplier if multiplier is not None else self.retry_multiplier
-        retry_on_status = retry_on_status if retry_on_status is not None else self.retry_on_status
+        config = retry_config or self._retry_config
+        effective_status = retry_on_status or self.retry_on_status
 
-        if max_attempts == 0:
-            return AsyncRetrying(
-                stop=stop_after_attempt(1),
-                retry=retry_if_exception(lambda _: False),  # NOTE: Never retry
-                reraise=True,
-            )
-
-        def should_retry_exception(exc: BaseException) -> bool:
-            """Determine if an exception should trigger a retry."""
+        def should_retry(exc: BaseException) -> bool:
             if isinstance(exc, RetryableError):
                 return True
-
             if isinstance(exc, ClientError) and exc.status_code is not None:
-                return exc.status_code in retry_on_status
-
+                return exc.status_code in effective_status
             return False
 
         def log_retry(retry_state: RetryCallState) -> None:
-            """Log retry attempts."""
             if retry_state.attempt_number > 1:
                 logger.warning(
-                    f"Retry {retry_state.attempt_number}/{max_attempts}: "
-                    f"{retry_state.outcome.exception() if retry_state.outcome else 'Unknown error'}"
+                    "Retry %d/%d: %s",
+                    retry_state.attempt_number,
+                    config.max_attempts,
+                    retry_state.outcome.exception() if retry_state.outcome else "Unknown error",
                 )
 
-        return AsyncRetrying(
-            stop=stop_after_attempt(max_attempts),
-            wait=wait_exponential(
-                multiplier=multiplier,
-                min=min_wait,
-                max=max_wait,
-            ),
-            retry=retry_if_exception(should_retry_exception),
-            reraise=True,
-            before_sleep=log_retry,
-        )
+        merged = config.model_copy(update={"retry_if": should_retry})
+        return Retry(config=merged, before_sleep=log_retry)
 
     @overload
     async def _arequest(
@@ -379,10 +324,7 @@ class BaseClient:
         files: FilesParam | None = None,
         content: StreamContent | None = None,
         headers: Headers | None = None,
-        max_retry_attempts: int | None = None,
-        retry_min_wait: float | None = None,
-        retry_max_wait: float | None = None,
-        retry_multiplier: float | None = None,
+        retry_config: RetryConfig | None = None,
         retry_on_status: frozenset[int] | None = None,
         **kwargs: Any,
     ) -> ResponseT: ...
@@ -397,10 +339,7 @@ class BaseClient:
         files: FilesParam | None = None,
         content: StreamContent | None = None,
         headers: Headers | None = None,
-        max_retry_attempts: int | None = None,
-        retry_min_wait: float | None = None,
-        retry_max_wait: float | None = None,
-        retry_multiplier: float | None = None,
+        retry_config: RetryConfig | None = None,
         retry_on_status: frozenset[int] | None = None,
         **kwargs: Any,
     ) -> tuple[ResponseT, httpx.Response]: ...
@@ -414,18 +353,11 @@ class BaseClient:
         files: FilesParam | None = None,
         content: StreamContent | None = None,
         headers: Headers | None = None,
-        max_retry_attempts: int | None = None,
-        retry_min_wait: float | None = None,
-        retry_max_wait: float | None = None,
-        retry_multiplier: float | None = None,
+        retry_config: RetryConfig | None = None,
         retry_on_status: frozenset[int] | None = None,
         **kwargs: Any,
     ) -> ResponseT | tuple[ResponseT, httpx.Response]:
         """Make a request to an endpoint with configurable retry and error handling.
-
-        This is the core method that all API calls go through. It provides:
-        request serialization, HTTP communication, error classification,
-        configurable retry with exponential backoff, and response deserialization.
 
         Parameters
         ----------
@@ -442,14 +374,8 @@ class BaseClient:
             Raw content for streaming or binary uploads (default: None).
         headers : Mapping[str, str] | None, optional
             Per-request headers to override/extend default headers (default: None).
-        max_retry_attempts : int | None, optional
-            Override maximum retry attempts for this request (default: None).
-        retry_min_wait : float | None, optional
-            Override minimum retry wait for this request (default: None).
-        retry_max_wait : float | None, optional
-            Override maximum retry wait for this request (default: None).
-        retry_multiplier : float | None, optional
-            Override retry multiplier for this request (default: None).
+        retry_config : RetryConfig | None, optional
+            Per-request retry override (default: uses instance config).
         retry_on_status : frozenset[int] | None, optional
             Override retry status codes for this request (default: None).
         **kwargs : Any
@@ -470,14 +396,9 @@ class BaseClient:
         ClientError
             For other errors (e.g., parsing failures).
         """
-        retrying = self._retryer(
-            max_attempts=max_retry_attempts,
-            min_wait=retry_min_wait,
-            max_wait=retry_max_wait,
-            multiplier=retry_multiplier,
-            retry_on_status=retry_on_status,
-        )
+        retry_decorator = self._retryer(retry_config=retry_config, retry_on_status=retry_on_status)
 
+        @retry_decorator
         async def _amake_request() -> ResponseT | tuple[ResponseT, httpx.Response]:
             """Inner function that performs the actual HTTP request."""
             method = endpoint.method.lower()
@@ -547,10 +468,153 @@ class BaseClient:
                     response_body=str(e),
                 ) from e
 
-        async for attempt in retrying:
-            with attempt:
-                return await _amake_request()
-        raise RuntimeError("Retry decorator did not execute")
+        return await _amake_request()
+
+    @overload
+    async def _arequest_bytes(
+        self,
+        endpoint: EndpointConfig[RequestT, ResponseT],
+        request_data: RequestT | None = None,
+        *,
+        return_raw: Literal[False] = False,
+        files: FilesParam | None = None,
+        content: StreamContent | None = None,
+        headers: Headers | None = None,
+        retry_config: RetryConfig | None = None,
+        retry_on_status: frozenset[int] | None = None,
+        **kwargs: Any,
+    ) -> bytes: ...
+
+    @overload
+    async def _arequest_bytes(
+        self,
+        endpoint: EndpointConfig[RequestT, ResponseT],
+        request_data: RequestT | None = None,
+        *,
+        return_raw: Literal[True],
+        files: FilesParam | None = None,
+        content: StreamContent | None = None,
+        headers: Headers | None = None,
+        retry_config: RetryConfig | None = None,
+        retry_on_status: frozenset[int] | None = None,
+        **kwargs: Any,
+    ) -> tuple[bytes, httpx.Response]: ...
+
+    async def _arequest_bytes(
+        self,
+        endpoint: EndpointConfig[RequestT, ResponseT],
+        request_data: RequestT | None = None,
+        *,
+        return_raw: bool = False,
+        files: FilesParam | None = None,
+        content: StreamContent | None = None,
+        headers: Headers | None = None,
+        retry_config: RetryConfig | None = None,
+        retry_on_status: frozenset[int] | None = None,
+        **kwargs: Any,
+    ) -> bytes | tuple[bytes, httpx.Response]:
+        """Make a request and return raw response bytes instead of a parsed model.
+
+        Parameters
+        ----------
+        endpoint : EndpointConfig[RequestT, ResponseT]
+            Endpoint configuration. ``response_type`` is ignored.
+        request_data : RequestT | None, optional
+            Request data model for POST/PUT/PATCH methods (default: None).
+        return_raw : bool, optional
+            If True, returns tuple of (body_bytes, raw_httpx_response).
+            If False, returns only the bytes (default: False).
+        files : Mapping[str, Any] | None, optional
+            Files to upload as multipart/form-data (default: None).
+        content : bytes | str | Iterable[bytes] | AsyncIterable[bytes] | None, optional
+            Raw content for streaming or binary uploads (default: None).
+        headers : Mapping[str, str] | None, optional
+            Per-request headers to override/extend default headers (default: None).
+        retry_config : RetryConfig | None, optional
+            Per-request retry override (default: uses instance config).
+        retry_on_status : frozenset[int] | None, optional
+            Override retry status codes for this request (default: None).
+        **kwargs : Any
+            Additional request options passed to httpx (e.g. ``params=``).
+
+        Returns
+        -------
+        bytes | tuple[bytes, httpx.Response]
+            If return_raw=False: the raw response body bytes.
+            If return_raw=True: tuple of (body_bytes, raw_httpx_response).
+
+        Raises
+        ------
+        RetryableError
+            For transient failures (automatically retried based on config).
+        PermanentError
+            For non-retryable failures (e.g., authentication errors).
+        ClientError
+            For other errors (e.g., transport-level issues).
+        """
+        retry_decorator = self._retryer(retry_config=retry_config, retry_on_status=retry_on_status)
+
+        @retry_decorator
+        async def _amake_request() -> bytes | tuple[bytes, httpx.Response]:
+            """Inner function that performs the actual HTTP request."""
+            method = endpoint.method.lower()
+
+            request_kwargs: dict[str, Any] = kwargs.copy()
+
+            if headers or self.default_headers:
+                request_kwargs["headers"] = {**self.default_headers, **(headers or {})}
+
+            # NOTE: precedence logic: files > content > json
+            if files is not None:
+                request_kwargs |= {"files": files}
+                if request_data:
+                    request_kwargs |= {"data": request_data.model_dump(mode="json")}
+            elif content is not None:
+                request_kwargs |= {"content": content}
+            elif request_data is not None:
+                request_kwargs |= {"json": request_data.model_dump(by_alias=True, exclude_none=True)}
+
+            try:
+                response = await self._client.request(method, endpoint.path, **request_kwargs)
+
+                request_id = response.headers.get("x-request-id")
+
+                match response.status_code:
+                    case code if code in self.success_status:
+                        body = response.content
+                        if return_raw:
+                            return body, response
+                        return body
+                    case _:
+                        error = self._classify_error(
+                            response.status_code,
+                            response.text,
+                            request_id,
+                        )
+
+                        match error:
+                            case RetryableError():
+                                logger.warning(f"Retryable error for {endpoint}: {response.status_code}")
+                            case _:
+                                logger.error(f"Permanent error for {endpoint}: {response.status_code}")
+
+                        raise error
+
+            # NOTE: `TimeoutException` & `NetworkError` are subclasses of `TransportError`
+            except httpx.TransportError as e:
+                logger.warning(f"Transport error for {endpoint}: {e}")
+                raise RetryableError(
+                    f"Transport error for {endpoint}",
+                    response_body=str(e),
+                ) from e
+            except httpx.HTTPError as e:
+                logger.error(f"HTTP error for {endpoint}: {e}")
+                raise ClientError(
+                    f"HTTP error for {endpoint}: {str(e)}",
+                    response_body=str(e),
+                ) from e
+
+        return await _amake_request()
 
     async def __aenter__(self) -> Self:
         """Async context manager entry.

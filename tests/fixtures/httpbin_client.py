@@ -8,7 +8,7 @@ from typing import Any
 
 import httpx
 
-from clientry import BaseClient, EmptyRequest, EndpointConfig
+from clientry import BaseClient, EmptyRequest, EndpointConfig, RetryConfig
 from tests.fixtures.httpbin_models import (
     DelayResponse,
     HTTPBinResponse,
@@ -35,7 +35,7 @@ class HTTPBinClient(BaseClient):
         http_client: httpx.AsyncClient | None = None,
         http_client_kwargs: dict[str, Any] | None = None,
         timeout: float = 30.0,
-        max_retries: int = 3,
+        retry_config: RetryConfig | None = None,
         **kwargs: Any,
     ) -> None:
         """Initialize HTTPBin client with configuration and base URL.
@@ -50,27 +50,24 @@ class HTTPBinClient(BaseClient):
             Additional kwargs for httpx.AsyncClient (default: None).
         timeout : float
             Request timeout in seconds (default: 30.0).
-        max_retries : int
-            Maximum retry attempts (default: 3).
+        retry_config : RetryConfig | None
+            Retry configuration (default: 3 attempts).
         **kwargs : Any
             Additional parameters passed to BaseClient.
         """
-        if "max_retries" in kwargs:
-            kwargs["max_retry_attempts"] = kwargs.pop("max_retries")
-
         super().__init__(
             base_url,
             http_client=http_client,
             http_client_kwargs=http_client_kwargs,
             timeout=timeout,
-            max_retry_attempts=max_retries,
+            retry_config=retry_config or RetryConfig(max_attempts=3),
             **kwargs,
         )
 
     async def echo_json(
         self,
         data: dict[str, Any],
-        max_retry_attempts: int | None = None,
+        retry_config: RetryConfig | None = None,
     ) -> HTTPBinResponse:
         """Send JSON data and get echo response.
 
@@ -78,8 +75,8 @@ class HTTPBinClient(BaseClient):
         ----------
         data : dict[str, Any]
             JSON data to send
-        max_retry_attempts : int | None
-            Override retry count for this request
+        retry_config : RetryConfig | None
+            Override retry config for this request
 
         Returns
         -------
@@ -96,7 +93,7 @@ class HTTPBinClient(BaseClient):
         return await self._arequest(
             endpoint,
             request,
-            max_retry_attempts=max_retry_attempts,
+            retry_config=retry_config,
         )
 
     async def upload_file(
@@ -191,7 +188,7 @@ class HTTPBinClient(BaseClient):
     async def test_status(
         self,
         status_code: int,
-        max_retry_attempts: int | None = None,
+        retry_config: RetryConfig | None = None,
     ) -> StatusResponse | None:
         """Test specific status code response.
 
@@ -199,8 +196,8 @@ class HTTPBinClient(BaseClient):
         ----------
         status_code : int
             HTTP status code to trigger
-        max_retry_attempts : int | None
-            Override retry count for this request
+        retry_config : RetryConfig | None
+            Override retry config for this request
 
         Returns
         -------
@@ -223,13 +220,13 @@ class HTTPBinClient(BaseClient):
         return await self._arequest(
             endpoint,
             EmptyRequest(),
-            max_retry_attempts=max_retry_attempts,
+            retry_config=retry_config,
         )
 
     async def test_delay(
         self,
         seconds: int,
-        max_retry_attempts: int | None = None,
+        retry_config: RetryConfig | None = None,
     ) -> DelayResponse:
         """Test delayed response.
 
@@ -237,8 +234,8 @@ class HTTPBinClient(BaseClient):
         ----------
         seconds : int
             Number of seconds to delay
-        max_retry_attempts : int | None
-            Override retry count for this request
+        retry_config : RetryConfig | None
+            Override retry config for this request
 
         Returns
         -------
@@ -254,7 +251,7 @@ class HTTPBinClient(BaseClient):
         return await self._arequest(
             endpoint,
             EmptyRequest(),
-            max_retry_attempts=max_retry_attempts,
+            retry_config=retry_config,
         )
 
     async def get_request(self, params: dict[str, Any] | None = None) -> HTTPBinResponse:
@@ -315,6 +312,41 @@ class HTTPBinClient(BaseClient):
             response_type=HTTPBinResponse,
         )
         return await self._arequest(endpoint, EmptyRequest())
+
+    async def get_image_png(self) -> bytes:
+        """Fetch the httpbin PNG sample as raw bytes.
+
+        Exercises :meth:`BaseClient._arequest_bytes` — the endpoint returns
+        ``image/png`` which cannot be parsed as JSON.
+
+        Returns
+        -------
+        bytes
+            The raw PNG payload.
+        """
+        endpoint = EndpointConfig[EmptyRequest, EmptyRequest](
+            path="/image/png",
+            method="GET",
+            request_type=EmptyRequest,
+            response_type=EmptyRequest,
+        )
+        return await self._arequest_bytes(endpoint, EmptyRequest())
+
+    async def get_random_bytes(self, n: int) -> bytes:
+        """Fetch ``n`` random bytes from httpbin.
+
+        Returns
+        -------
+        bytes
+            ``n`` pseudo-random bytes from ``/bytes/{n}``.
+        """
+        endpoint = EndpointConfig[EmptyRequest, EmptyRequest](
+            path=f"/bytes/{n}",
+            method="GET",
+            request_type=EmptyRequest,
+            response_type=EmptyRequest,
+        )
+        return await self._arequest_bytes(endpoint, EmptyRequest())
 
     async def test_headers(self, custom_headers: dict[str, str]) -> HTTPBinResponse:
         """Test custom headers.

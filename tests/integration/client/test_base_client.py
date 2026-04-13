@@ -9,13 +9,13 @@ import httpx
 import pytest
 import pytest_asyncio
 
-from clientry import PermanentError, RetryableError
+from clientry import PermanentError, RetryableError, RetryConfig
 from tests.fixtures.httpbin_client import HTTPBinClient
 from tests.fixtures.httpbin_models import HTTPBinResponse
 
 
 @pytest_asyncio.fixture
-async def client() -> AsyncGenerator[HTTPBinClient, None]:
+async def client() -> AsyncGenerator[HTTPBinClient]:
     async with HTTPBinClient(timeout=10.0) as client:
         yield client
 
@@ -34,9 +34,7 @@ async def test_generic_request_pattern_type_safety(client: HTTPBinClient) -> Non
 async def test_retry_configuration_precedence() -> None:
     client = HTTPBinClient(
         timeout=5.0,
-        max_retries=3,
-        retry_min_wait=0.1,
-        retry_max_wait=0.5,
+        retry_config=RetryConfig(max_attempts=3, wait_min=0.1, wait_max=0.5),
     )
 
     mock_http_client = AsyncMock()
@@ -74,7 +72,7 @@ async def test_retry_configuration_precedence() -> None:
 
     with patch.object(client, "_client", mock_http_client):
         with pytest.raises(RetryableError) as exc_info:
-            await client.echo_json({"test": "no-retry"}, max_retry_attempts=0)
+            await client.echo_json({"test": "no-retry"}, retry_config=RetryConfig(max_attempts=1))
         assert exc_info.value.status_code == 503
         assert mock_http_client.request.call_count == 1
 
@@ -84,12 +82,12 @@ async def test_retry_configuration_precedence() -> None:
 @pytest.mark.asyncio
 async def test_error_classification(client: HTTPBinClient) -> None:
     with pytest.raises(PermanentError) as exc_info_perm:
-        await client.test_status(404, max_retry_attempts=1)
+        await client.test_status(404, retry_config=RetryConfig(max_attempts=1))
     assert exc_info_perm.value.status_code == 404
     assert "Permanent error: 404" in str(exc_info_perm.value)
 
     with pytest.raises(RetryableError) as exc_info_retry:
-        await client.test_status(503, max_retry_attempts=1)
+        await client.test_status(503, retry_config=RetryConfig(max_attempts=1))
     assert exc_info_retry.value.status_code == 503
     assert "Retryable error: 503" in str(exc_info_retry.value)
 
@@ -142,6 +140,73 @@ async def test_context_manager_lifecycle() -> None:
 
 
 @pytest.mark.asyncio
+async def test_arequest_bytes_returns_binary_body(client: HTTPBinClient) -> None:
+    """Binary endpoints (image/png) must return raw bytes, not JSON-parsed."""
+    body = await client.get_image_png()
+
+    assert isinstance(body, bytes)
+    assert body.startswith(b"\x89PNG\r\n\x1a\n"), "expected PNG magic bytes"
+    assert len(body) > 0
+
+
+@pytest.mark.asyncio
+async def test_arequest_bytes_exact_length(client: HTTPBinClient) -> None:
+    """Bytes endpoint should return exactly the requested number of bytes."""
+    body = await client.get_random_bytes(1024)
+
+    assert isinstance(body, bytes)
+    assert len(body) == 1024
+
+
+@pytest.mark.asyncio
+async def test_arequest_bytes_return_raw(client: HTTPBinClient) -> None:
+    """return_raw=True should surface both bytes and the raw httpx.Response."""
+    from clientry import EmptyRequest, EndpointConfig
+
+    endpoint = EndpointConfig[EmptyRequest, EmptyRequest](
+        path="/image/png",
+        method="GET",
+        request_type=EmptyRequest,
+        response_type=EmptyRequest,
+    )
+
+    body, raw = await client._arequest_bytes(endpoint, EmptyRequest(), return_raw=True)
+
+    assert isinstance(body, bytes)
+    assert isinstance(raw, httpx.Response)
+    assert raw.status_code == 200
+    assert raw.headers.get("content-type") == "image/png"
+    assert body == raw.content
+
+
+@pytest.mark.asyncio
+async def test_arequest_bytes_error_classification() -> None:
+    """Errors on binary endpoints must classify like _arequest (permanent vs retryable)."""
+    from clientry import EmptyRequest, EndpointConfig
+
+    async with HTTPBinClient(timeout=10.0) as client:
+        permanent_endpoint = EndpointConfig[EmptyRequest, EmptyRequest](
+            path="/status/404",
+            method="GET",
+            request_type=EmptyRequest,
+            response_type=EmptyRequest,
+        )
+        with pytest.raises(PermanentError) as perm_exc:
+            await client._arequest_bytes(permanent_endpoint, EmptyRequest(), retry_config=RetryConfig(max_attempts=1))
+        assert perm_exc.value.status_code == 404
+
+        retry_endpoint = EndpointConfig[EmptyRequest, EmptyRequest](
+            path="/status/503",
+            method="GET",
+            request_type=EmptyRequest,
+            response_type=EmptyRequest,
+        )
+        with pytest.raises(RetryableError) as retry_exc:
+            await client._arequest_bytes(retry_endpoint, EmptyRequest(), retry_config=RetryConfig(max_attempts=1))
+        assert retry_exc.value.status_code == 503
+
+
+@pytest.mark.asyncio
 async def test_concurrent_requests(client: HTTPBinClient) -> None:
     tasks = [client.echo_json({"request_id": i}) for i in range(5)]
     results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -171,8 +236,8 @@ async def test_injected_client_not_closed() -> None:
 
     await client.aclose()
 
-    response = await custom_client.get("/get")
-    assert response.status_code == 200
+    raw_response = await custom_client.get("/get")
+    assert raw_response.status_code == 200
 
     await custom_client.aclose()
 
