@@ -110,7 +110,7 @@ class RetryableError(ClientError):
     Notes
     -----
     The retry behavior is configured in the BaseClient._request method
-    using the tenacity library with exponential backoff.
+    using the hypervigilant retry module with exponential backoff.
     """
 
     pass

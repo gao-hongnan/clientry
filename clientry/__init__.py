@@ -1,6 +1,6 @@
 """Generic Request Pattern implementation for type-safe API clients."""
 
-from tenacious.retry import RetryConfig
+from hypervigilant.retry import RetryConfig
 
 from clientry.base import BaseClient
 from clientry.errors import ClientError, PermanentError, RetryableError

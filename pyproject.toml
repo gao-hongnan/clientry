@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "clientry"
-version = "6.0.0"
+version = "7.0.0"
 description = "A collection of code for clientry."
 authors = [{name="GAO Hongnan", email="hongnangao@gmail.com"}]
 readme = "README.md"
@@ -18,10 +18,10 @@ classifiers = [
 
 dependencies = [
     "httpx>=0.28.1",
+    "hypervigilant>=18.0.0",
     "pydantic>=2.11.7",
     "pydantic-settings>=2.10.1",
     "rich>=13.0.0",
-    "tenacious",
 ]
 
 
@@ -101,9 +101,6 @@ dev = [
     { include-group = "test" },
     { include-group = "docs" },
 ]
-
-[tool.uv.sources]
-tenacious = { path = "../tenacious", editable = true }
 
 [tool.bandit]
 exclude_dirs = [

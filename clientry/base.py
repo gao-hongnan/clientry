@@ -28,11 +28,12 @@ from __future__ import annotations
 
 import json
 import logging
-from typing import Any, Literal, Self, overload
+from typing import Any, Awaitable, Callable, Literal, Self, TypeVar, overload
 from urllib.parse import urlparse
 
 import httpx
-from tenacious.retry import Retry, RetryCallState, RetryConfig
+from hypervigilant.retry import RetryConfig, build_retry_condition, retry
+from tenacity import RetryCallState, stop_after_attempt, wait_random_exponential
 
 from clientry.errors import (
     ClientError,
@@ -49,6 +50,8 @@ from clientry.types import (
     StatusCode,
     StreamContent,
 )
+
+T = TypeVar("T")
 
 logger = logging.getLogger(__name__)
 
@@ -277,8 +280,8 @@ class BaseClient:
         self,
         retry_config: RetryConfig | None = None,
         retry_on_status: frozenset[int] | None = None,
-    ) -> Retry:
-        """Build a :class:`tenacious.retry.Retry` decorator for one request.
+    ) -> Callable[[Callable[..., Awaitable[T]]], Callable[..., Awaitable[T]]]:
+        """Build a :func:`hypervigilant.retry.retry` decorator for one request.
 
         Parameters
         ----------
@@ -289,7 +292,7 @@ class BaseClient:
 
         Returns
         -------
-        Retry
+        Callable
             Configured retry decorator ready to wrap an async function.
         """
         config = retry_config or self._retry_config
@@ -311,8 +314,18 @@ class BaseClient:
                     retry_state.outcome.exception() if retry_state.outcome else "Unknown error",
                 )
 
-        merged = config.model_copy(update={"retry_if": should_retry})
-        return Retry(config=merged, before_sleep=log_retry)
+        return retry(
+            stop=stop_after_attempt(config.max_attempts),
+            wait=wait_random_exponential(
+                multiplier=config.multiplier,
+                min=config.wait_min,
+                max=config.wait_max,
+                exp_base=config.exp_base,
+            ),
+            retry_condition=build_retry_condition(retry_if=should_retry),
+            before_sleep=log_retry,
+            reraise=config.reraise,
+        )
 
     @overload
     async def _arequest(
